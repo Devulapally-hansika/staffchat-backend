@@ -2,6 +2,7 @@ package staffchat;
 
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -66,5 +67,18 @@ public class AuthController {
         employeeRepository.save(employee);
 
         return "Password reset successful";
+    }
+    // TEMPORARY MAGIC LINK TO CREATE FIRST ADMIN
+    @GetMapping("/setup")
+    public String setupAdmin() {
+        Employee admin = new Employee();
+        admin.setEmployeeId("ADMIN01");
+        admin.setFullName("Hospital Admin");
+        admin.setRole("ADMIN");
+        admin.setEmail("admin@hospital.com");
+        admin.setPasswordHash(passwordEncoder.encode("admin123"));
+        admin.setActive(true);
+        employeeRepository.save(admin);
+        return "SUCCESS! ID: ADMIN01  Password: admin123";
     }
 }
