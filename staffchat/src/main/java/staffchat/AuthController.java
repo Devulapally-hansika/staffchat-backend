@@ -81,4 +81,8 @@ public class AuthController {
         employeeRepository.save(admin);
         return "SUCCESS! ID: ADMIN01  Password: admin123";
     }
+    @GetMapping("/ping")
+    public String ping() {
+        return "OK";
+    }
 }
