@@ -15,18 +15,17 @@ public class DataSeeder {
     @Bean
     public CommandLineRunner seedDatabase(EmployeeRepository employeeRepository) {
         return args -> {
-            // Clear old data to start fresh
-            employeeRepository.deleteAll();
+            // REMOVED deleteAll() to prevent crashing the database!
 
             PasswordEncoder passwordEncoder = new BCryptPasswordEncoder();
-            String defaultPassword = "Origins@2024";
+            String defaultPassword = "Origins@2024"; // USE THIS PASSWORD TO LOGIN
             String hashedPassword = passwordEncoder.encode(defaultPassword);
-            System.out.println("🔒 Password hashed successfully!");
+            System.out.println(" Password hashed successfully!");
 
             List<Employee> employees = Arrays.asList(
                     // --- 3 ADMINS ---
                     createEmp("969", "Nakul Reddy Aerram", "originsivf.keka@gmail.com", "ADMIN", hashedPassword),
-                    createEmp("102", "Karun Cheruku", "originsivf@gmail.com", "ADMIN", hashedPassword), // CHANGED TO KARUN
+                    createEmp("102", "Karun Cheruku", "originsivf@gmail.com", "ADMIN", hashedPassword),
                     createEmp("1047", "Hansika Devulapally", "hansikad2005@gmail.com", "ADMIN", hashedPassword),
 
                     // --- 45 EMPLOYEES ---
@@ -52,7 +51,7 @@ public class DataSeeder {
                     createEmp("965", "Pallekanti Shyam", "nanu.shyam33@gmail.com", "EMPLOYEE", hashedPassword),
                     createEmp("966", "Janakanoori Virinchi", "virinchijanak8@gmail.com", "EMPLOYEE", hashedPassword),
                     createEmp("970", "Srinagavani Chunduru", "srinagavani.ch3797@gmail.com", "EMPLOYEE", hashedPassword),
-                    createEmp("975", "Keshab Kumar M", "hr@originsivf.com", "EMPLOYEE", hashedPassword), // Keshav is now EMPLOYEE
+                    createEmp("975", "Keshab Kumar M", "hr@originsivf.com", "EMPLOYEE", hashedPassword),
                     createEmp("982", "Priyanka Neralla", "priyanakanerella@gmail.com", "EMPLOYEE", hashedPassword),
                     createEmp("985", "Pravalika Mettu", "mettuvasantha123@gmail.com", "EMPLOYEE", hashedPassword),
                     createEmp("986", "Prabhavathi Vadde", "prabhayadhav134@gmail.com", "EMPLOYEE", hashedPassword),
@@ -78,12 +77,12 @@ public class DataSeeder {
             );
 
             for (Employee emp : employees) {
-                employeeRepository.save(emp);
-                System.out.println("✔ Added: " + emp.getFullName() + " (" + emp.getEmployeeId() + ") - Role: " + emp.getRole());
+                employeeRepository.save(emp); // This safely updates roles without deleting data!
+                System.out.println("✔ Saved: " + emp.getFullName() + " (" + emp.getEmployeeId() + ") - Role: " + emp.getRole());
             }
 
-            System.out.println("\n🎉 SUCCESS! All 48 people added to PostgreSQL!");
-            System.out.println(" ADMINS: Nakul (969), Karun (102), Hansika (1047)");
+            System.out.println("\n SUCCESS! All 48 people updated in PostgreSQL!");
+            System.out.println("👑 ADMINS: Nakul (969), Karun (102), Hansika (1047)");
             System.out.println(" Default Password for everyone: " + defaultPassword);
         };
     }
