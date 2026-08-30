@@ -9,13 +9,13 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import java.util.Arrays;
 import java.util.List;
 
-//@Configuration
+@Configuration
 public class DataSeeder {
 
     @Bean
     public CommandLineRunner seedDatabase(EmployeeRepository employeeRepository) {
         return args -> {
-            if (employeeRepository.count() > 10) {
+            if (employeeRepository.count() > 100) {
                 System.out.println("✅ Database already has employees. Skipping seed.");
                 return;
             }
