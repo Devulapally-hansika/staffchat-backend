@@ -21,7 +21,7 @@ public class DataSeeder {
             }
 
             PasswordEncoder passwordEncoder = new BCryptPasswordEncoder();
-            String defaultPassword = "Origins@2024";
+            String defaultPassword = "welcome@123";
             String hashedPassword = passwordEncoder.encode(defaultPassword);
             System.out.println("🔒 Password hashed successfully!");
 
