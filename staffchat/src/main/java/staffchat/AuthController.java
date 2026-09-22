@@ -1,17 +1,14 @@
 package staffchat;
 
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
 import java.util.Optional;
 
 record LoginRequest(String employeeId, String password) {}
 record LoginResponse(String token, String employeeId, String fullName, String role) {}
-record ForgotPasswordRequest(String employeeId, String email, String newPassword) {} // NEW
+record ForgotPasswordRequest(String employeeId, String email, String newPassword) {}
 
 @RestController
 @RequestMapping("/api/auth")
@@ -27,48 +24,58 @@ public class AuthController {
     }
 
     @PostMapping("/login")
-    public LoginResponse login(@RequestBody LoginRequest request) {
-        String searchId = request.employeeId().trim().toUpperCase();
-        Optional<Employee> found = employeeRepository.findById(searchId);
+    public ResponseEntity<?> login(@RequestBody LoginRequest request) {
+        try {
+            String searchId = request.employeeId().trim().toUpperCase();
 
-        if (found.isEmpty()) {
-            throw new RuntimeException("Invalid employee ID or password");
+            // Reverted to findById. It works perfectly because your ID is a String.
+            Optional<Employee> found = employeeRepository.findById(searchId);
+
+            if (found.isEmpty()) {
+                return ResponseEntity.status(401).body("Invalid employee ID or password");
+            }
+
+            Employee employee = found.get();
+
+            if (employee.getPasswordHash() == null || !passwordEncoder.matches(request.password(), employee.getPasswordHash())) {
+                return ResponseEntity.status(401).body("Invalid employee ID or password");
+            }
+
+            String token = jwtUtil.generateToken(employee.getEmployeeId(), employee.getRole());
+            return ResponseEntity.ok(new LoginResponse(token, employee.getEmployeeId(), employee.getFullName(), employee.getRole()));
+
+        } catch (Exception e) {
+            e.printStackTrace();
+            return ResponseEntity.status(500).body("Server error: " + e.getMessage());
         }
-
-        Employee employee = found.get();
-
-        if (!passwordEncoder.matches(request.password(), employee.getPasswordHash())) {
-            throw new RuntimeException("Invalid employee ID or password");
-        }
-
-        String token = jwtUtil.generateToken(employee.getEmployeeId(), employee.getRole());
-        return new LoginResponse(token, employee.getEmployeeId(), employee.getFullName(), employee.getRole());
     }
 
-    // 🔹 NEW ENDPOINT FOR FORGOT PASSWORD
     @PostMapping("/forgot-password")
-    public String forgotPassword(@RequestBody ForgotPasswordRequest request) {
-        String searchId = request.employeeId().trim().toUpperCase();
-        Optional<Employee> found = employeeRepository.findById(searchId);
+    public ResponseEntity<?> forgotPassword(@RequestBody ForgotPasswordRequest request) {
+        try {
+            String searchId = request.employeeId().trim().toUpperCase();
+            Optional<Employee> found = employeeRepository.findById(searchId);
 
-        if (found.isEmpty()) {
-            throw new RuntimeException("Employee ID not found");
+            if (found.isEmpty()) {
+                return ResponseEntity.status(404).body("Employee ID not found");
+            }
+
+            Employee employee = found.get();
+
+            if (employee.getEmail() == null || !employee.getEmail().equalsIgnoreCase(request.email().trim())) {
+                return ResponseEntity.status(400).body("Email does not match our records");
+            }
+
+            employee.setPasswordHash(passwordEncoder.encode(request.newPassword()));
+            employeeRepository.save(employee);
+
+            return ResponseEntity.ok("Password reset successful");
+        } catch (Exception e) {
+            e.printStackTrace();
+            return ResponseEntity.status(500).body("Server error: " + e.getMessage());
         }
-
-        Employee employee = found.get();
-
-        // Verify the email matches the one in database
-        if (employee.getEmail() == null || !employee.getEmail().equalsIgnoreCase(request.email().trim())) {
-            throw new RuntimeException("Email does not match our records");
-        }
-
-        // Update password
-        employee.setPasswordHash(passwordEncoder.encode(request.newPassword()));
-        employeeRepository.save(employee);
-
-        return "Password reset successful";
     }
-    // TEMPORARY MAGIC LINK TO CREATE FIRST ADMIN
+
     @GetMapping("/setup")
     public String setupAdmin() {
         Employee admin = new Employee();
@@ -81,6 +88,7 @@ public class AuthController {
         employeeRepository.save(admin);
         return "SUCCESS! ID: ADMIN01  Password: admin123";
     }
+
     @GetMapping("/ping")
     public String ping() {
         return "OK";
