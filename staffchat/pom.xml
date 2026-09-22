@@ -15,6 +15,8 @@
 	<description>Staff Chat Application</description>
 	<properties>
 		<java.version>17</java.version>
+		<!-- This is the correct Spring Boot way to override the Postgres driver version -->
+		<postgresql.version>42.7.3</postgresql.version>
 	</properties>
 	<dependencies>
 		<dependency>
@@ -53,14 +55,14 @@
 			<scope>runtime</scope>
 		</dependency>
 
-		<!-- PostgreSQL Driver -->
+		<!-- PostgreSQL Driver (No version tag here, it uses the property above) -->
 		<dependency>
 			<groupId>org.postgresql</groupId>
 			<artifactId>postgresql</artifactId>
 			<scope>runtime</scope>
 		</dependency>
 
-		<!-- Testing - Single starter includes everything -->
+		<!-- Testing -->
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-test</artifactId>
