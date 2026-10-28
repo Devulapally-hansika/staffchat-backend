@@ -1,5 +1,5 @@
 package staffchat;
-
+import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.web.bind.annotation.*;
@@ -10,6 +10,7 @@ record LoginRequest(String employeeId, String password) {}
 record LoginResponse(String token, String employeeId, String fullName, String role) {}
 record ForgotPasswordRequest(String employeeId, String email, String newPassword) {}
 
+@CrossOrigin(origins = {"http://127.0.0.1:5500", "http://localhost:5500"}, allowCredentials = "true")
 @RestController
 @RequestMapping("/api/auth")
 public class AuthController {

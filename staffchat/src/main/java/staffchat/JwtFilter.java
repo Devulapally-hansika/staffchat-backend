@@ -23,10 +23,18 @@ public class JwtFilter extends OncePerRequestFilter {
                                     HttpServletResponse response,
                                     FilterChain filterChain)
             throws ServletException, IOException {
-
+        if ("OPTIONS".equalsIgnoreCase(request.getMethod())) {
+            response.setHeader("Access-Control-Allow-Origin", request.getHeader("Origin") != null ? request.getHeader("Origin") : "*");
+            response.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+            response.setHeader("Access-Control-Allow-Headers", "*");
+            response.setHeader("Access-Control-Allow-Credentials", "true");
+            response.setStatus(HttpServletResponse.SC_OK);
+            return;
+        }
         String path = request.getRequestURI();
 
-        if (path.startsWith("/api/auth")) {
+        // Allow login, authentication, and root paths without requiring a token
+        if (path.startsWith("/api/auth") || path.contains("/login") || path.equals("/")) {
             filterChain.doFilter(request, response);
             return;
         }

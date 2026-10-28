@@ -1,5 +1,6 @@
 package staffchat;
 
+import com.fasterxml.jackson.annotation.JsonFormat;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
@@ -19,6 +20,8 @@ public class Message {
     private Long chatId;      // which room this message belongs to
     private String senderId;  // who sent it
     private String content;   // the text
+
+    @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd'T'HH:mm:ss")
     private LocalDateTime sentAt; // when it was sent
 
     public Long getId() { return id; }
