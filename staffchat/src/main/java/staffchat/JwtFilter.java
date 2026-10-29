@@ -33,12 +33,21 @@ public class JwtFilter extends OncePerRequestFilter {
         }
         String path = request.getRequestURI();
 
-        // Allow login, authentication, and root paths without requiring a token
-        if (path.startsWith("/api/auth") || path.contains("/login") || path.equals("/")) {
+        // 1. Allow static web assets (PWA files), root paths, and auth routes without requiring a token
+        if (path.equals("/")
+                || path.equals("/index.html")
+                || path.endsWith(".css")
+                || path.endsWith(".js")
+                || path.endsWith(".json")
+                || path.endsWith(".png")
+                || path.endsWith(".ico")
+                || path.startsWith("/api/auth")
+                || path.contains("/login")) {
             filterChain.doFilter(request, response);
             return;
         }
 
+        // 2. Allow WebSocket handshake verification via query param
         if (path.startsWith("/ws")) {
             String token = request.getParameter("token");
             if (token == null || !jwtUtil.isValid(token)) {
@@ -50,6 +59,7 @@ public class JwtFilter extends OncePerRequestFilter {
             return;
         }
 
+        // 3. Protected API routes require Bearer token
         String header = request.getHeader("Authorization");
 
         if (header == null || !header.startsWith("Bearer ")) {
