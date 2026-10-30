@@ -6,6 +6,8 @@ let currentUser = null;
 let activeChat = null;
 let pollTimer = null;
 let chatListTimer = null;
+let latestChatList = []; // Holds current chats for instant filtering
+let employeeDirectoryMap = {}; // Maps EmployeeID -> Full Name for searching
 
 // Views
 const viewLogin = document.getElementById('view-login');
@@ -24,6 +26,60 @@ const modalAddEmp = document.getElementById('modal-add-emp');
 const modalGroup = document.getElementById('modal-group');
 const fabAddEmp = document.getElementById('fab-add-emp');
 const fabGroup = document.getElementById('fab-group');
+const chatSearchInput = document.getElementById('search-chats') ||
+    document.querySelector('input[placeholder*="Search"]');
+
+// --- Preload Employee Directory for Name Searching ---
+async function loadEmployeeDirectory() {
+  if (!currentUser) return;
+  try {
+    const res = await fetch(`${BACKEND_URL}/api/employees`, {
+      headers: { 'Authorization': `Bearer ${currentUser.token}`, 'X-Tunnel-Skip-Anti-Phishing-Page': 'true' }
+    });
+    if (!res.ok) return;
+    const users = await res.json();
+    if (Array.isArray(users)) {
+      users.forEach(u => {
+        const id = String(u.employeeId || u.id || '').trim().toUpperCase();
+        const name = (u.fullName || u.name || u.username || '').trim();
+        if (id) {
+          employeeDirectoryMap[id] = name;
+        }
+      });
+    }
+  } catch (e) {
+    console.error('Could not load employee directory for search:', e);
+  }
+}
+
+// --- Real-time Search Filter (ID, Full Name, Group Name) ---
+if (chatSearchInput) {
+  chatSearchInput.addEventListener('input', (e) => {
+    const query = e.target.value.trim().toLowerCase();
+    filterAndRenderChats(query);
+  });
+}
+
+function filterAndRenderChats(query = '') {
+  if (!query) {
+    renderChatListDOM(latestChatList);
+    return;
+  }
+
+  const filtered = latestChatList.filter(chat => {
+    const peerId = (chat.peerName || '').toLowerCase();
+    const fullName = (chat.fullName || '').toLowerCase();
+    const chatTitle = (chat.chatName || '').toLowerCase();
+    const lastMsg = (chat.lastMsgText || '').toLowerCase();
+
+    return peerId.includes(query) ||
+        fullName.includes(query) ||
+        chatTitle.includes(query) ||
+        lastMsg.includes(query);
+  });
+
+  renderChatListDOM(filtered);
+}
 
 // --- Eye Toggle on Login ---
 const togglePasswordBtn = document.getElementById('toggle-password');
@@ -63,7 +119,7 @@ function restoreChatLocally(chatId) {
   localStorage.setItem(`hiddenChats_${currentUser.empId}`, JSON.stringify(hidden));
 }
 
-// --- Read / Unread Tracking (Persistent by Highest Message ID) ---
+// --- Read / Unread Tracking (Persistent by Highest Message ID & Read Count) ---
 function getLastReadMsgId(chatId) {
   if (!currentUser) return null;
   const val = localStorage.getItem(`lastReadMsgId_${currentUser.empId}_${chatId}`);
@@ -150,12 +206,13 @@ function renderChatListDOM(uniqueChats) {
   chatListContainer.innerHTML = '';
 
   if (!uniqueChats || uniqueChats.length === 0) {
-    chatListContainer.innerHTML = '<p style="text-align:center; color:#888; padding:20px;">No chats yet. Tap + to start one.</p>';
+    chatListContainer.innerHTML = '<p style="text-align:center; color:#888; padding:20px;">No chats found.</p>';
     return;
   }
 
   uniqueChats.forEach(chat => {
     const peer = chat.peerName;
+    const displayName = chat.fullName ? `${peer} — ${chat.fullName}` : peer;
     const div = document.createElement('div');
     div.className = 'conversation-item';
     div.style.cssText = 'display:flex; justify-content:space-between; align-items:center; padding:12px 16px; border-bottom:1px solid #eee; cursor:pointer; user-select:none;';
@@ -168,7 +225,7 @@ function renderChatListDOM(uniqueChats) {
       <div class="item-left" style="display:flex; align-items:center; gap:12px; pointer-events:none;">
         <div class="user-avatar-circle" style="font-size:24px;">👤</div>
         <div>
-          <div class="contact-name" style="font-weight:600; font-size:15px; color:#111;">${peer}</div>
+          <div class="contact-name" style="font-weight:600; font-size:15px; color:#111;">${displayName}</div>
           <div style="font-size:12px; color:#777; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
             ${chat.lastMsgText || 'Tap to view'}
           </div>
@@ -207,14 +264,16 @@ function renderCachedChats() {
     if (cached) {
       const parsed = JSON.parse(cached);
       if (Array.isArray(parsed) && parsed.length > 0) {
-        renderChatListDOM(parsed);
+        latestChatList = parsed;
+        const currentQuery = chatSearchInput ? chatSearchInput.value.trim().toLowerCase() : '';
+        filterAndRenderChats(currentQuery);
       }
     }
   } catch (e) {}
 }
 
-// --- Session Initializer & Resumption Handler ---
-function resumeUserSession() {
+// --- Startup & Auth ---
+window.addEventListener('DOMContentLoaded', async () => {
   const token = localStorage.getItem('token');
   const role = localStorage.getItem('role');
   const empId = localStorage.getItem('empId');
@@ -222,33 +281,18 @@ function resumeUserSession() {
   if (token && empId) {
     currentUser = { token, role: (role || '').toUpperCase(), empId: empId.toUpperCase() };
 
-    // Group button visible for all authenticated staff
     if (fabGroup) fabGroup.classList.remove('hidden');
-    // Add staff button strictly restricted to Admin
-    if (fabAddEmp && currentUser.role === 'ADMIN') {
-      fabAddEmp.classList.remove('hidden');
-    } else if (fabAddEmp) {
-      fabAddEmp.classList.add('hidden');
-    }
+    if (fabAddEmp && currentUser.role === 'ADMIN') fabAddEmp.classList.remove('hidden');
 
     showScreen(viewMain);
-    renderCachedChats(); // Instant load from memory
-    loadMyChats();        // Background network sync
+    await loadEmployeeDirectory();
+    renderCachedChats();
+    loadMyChats();
     startChatListBackgroundPolling();
   } else {
     showScreen(viewLogin);
   }
-}
-
-// Attach lifecycle listeners so chats stay visible when returning without logout
-window.addEventListener('DOMContentLoaded', resumeUserSession);
-document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') {
-    resumeUserSession();
-  }
 });
-window.addEventListener('focus', resumeUserSession);
-window.addEventListener('pageshow', resumeUserSession);
 
 const formLogin = document.getElementById('form-login');
 if (formLogin) {
@@ -276,6 +320,7 @@ if (formLogin) {
       if (fabAddEmp && currentUser.role === 'ADMIN') fabAddEmp.classList.remove('hidden');
 
       showScreen(viewMain);
+      await loadEmployeeDirectory();
       renderCachedChats();
       loadMyChats();
       startChatListBackgroundPolling();
@@ -285,7 +330,7 @@ if (formLogin) {
   });
 }
 
-// --- Main Chat List with Accurate Unread Resolution ---
+// --- Main Chat List with Accurate Unread Resolution & Name Mapping ---
 async function loadMyChats() {
   if (!currentUser || !chatListContainer) return;
   try {
@@ -299,6 +344,7 @@ async function loadMyChats() {
     const visible = allChats.filter(c => !hidden.includes(Number(c.id)));
 
     if (visible.length === 0) {
+      latestChatList = [];
       chatListContainer.innerHTML = '<p style="text-align:center; color:#888; padding:20px;">No chats yet. Tap + to start one.</p>';
       localStorage.setItem(`cached_chats_${currentUser.empId}`, JSON.stringify([]));
       return;
@@ -320,13 +366,11 @@ async function loadMyChats() {
 
             let unread = 0;
             if (storedReadId !== null) {
-              // Count only genuine new messages sent after our last read ID
               unread = msgs.filter(m =>
                   Number(m.id || 0) > storedReadId &&
                   String(m.senderId).toUpperCase() !== currentUser.empId.toUpperCase()
               ).length;
             } else {
-              // First time discovering chat: check if the latest message was an incoming unseen message
               const isFromOther = String(lastMsg.senderId).toUpperCase() !== currentUser.empId.toUpperCase();
               if (isFromOther) {
                 unread = 1;
@@ -351,20 +395,26 @@ async function loadMyChats() {
       return { ...chat, totalMsgs: 0, unreadCount: 0, lastMsgId: 0, lastMsgText: '', lastMsgFormattedTime: '' };
     }));
 
+    // Auto-sort by latest message ID
     chatsWithMeta.sort((a, b) => (b.lastMsgId || 0) - (a.lastMsgId || 0));
 
+    // Deduplicate and attach Full Name from Directory
     const seenPeers = new Set();
     const uniqueChats = [];
     for (const chat of chatsWithMeta) {
       const peer = getPeerDisplayName(chat);
       if (!seenPeers.has(peer.toUpperCase())) {
         seenPeers.add(peer.toUpperCase());
-        uniqueChats.push({ ...chat, peerName: peer });
+        const mappedName = employeeDirectoryMap[peer.toUpperCase()] || '';
+        uniqueChats.push({ ...chat, peerName: peer, fullName: mappedName });
       }
     }
 
+    latestChatList = uniqueChats;
     localStorage.setItem(`cached_chats_${currentUser.empId}`, JSON.stringify(uniqueChats));
-    renderChatListDOM(uniqueChats);
+
+    const activeQuery = chatSearchInput ? chatSearchInput.value.trim().toLowerCase() : '';
+    filterAndRenderChats(activeQuery);
   } catch (err) {
     console.error('Error loading chats:', err);
   }
@@ -436,13 +486,12 @@ async function onSelectMemberToChat(targetEmpId) {
   }
 }
 
-// --- Multi-Step Group Creation Flow (Name -> Dynamic Checkbox Selection) ---
+// --- Multi-Step Group Creation Flow (Name -> Checkbox Selection with Self Default) ---
 if (fabGroup) {
   fabGroup.addEventListener('click', () => {
     if (!modalGroup) return;
     modalGroup.classList.remove('hidden');
 
-    // Step 1: Input Group Name
     modalGroup.innerHTML = `
       <div style="background:#fff; border-radius:12px; padding:20px; width:90%; max-width:400px; margin:40px auto; box-shadow:0 4px 16px rgba(0,0,0,0.2);">
         <h3 style="margin-top:0; font-size:17px; font-weight:700;">Create New Group</h3>
@@ -469,7 +518,6 @@ if (fabGroup) {
 async function openGroupMemberSelection(groupName) {
   if (!modalGroup) return;
 
-  // Step 2: Native Android style member selection dialog
   modalGroup.innerHTML = `
     <div style="background:#fff; border-radius:14px; padding:24px 20px 16px 20px; width:88%; max-width:380px; margin:60px auto; box-shadow:0 8px 30px rgba(0,0,0,0.3); display:flex; flex-direction:column; font-family:sans-serif;">
       <h3 style="margin:0 0 18px 0; font-size:17px; font-weight:700; color:#111;">Add members to ${groupName}</h3>
@@ -517,7 +565,7 @@ async function openGroupMemberSelection(groupName) {
 
         if (isSelf) {
           chk.checked = true;
-          chk.disabled = true; // Creator is pre-selected by default
+          chk.disabled = true;
         } else {
           chk.onchange = (e) => {
             if (e.target.checked) selectedMembers.add(id);
