@@ -29,6 +29,23 @@ const fabGroup = document.getElementById('fab-group');
 const chatSearchInput = document.getElementById('search-chats') ||
     document.querySelector('input[placeholder*="Search"]');
 
+// --- Session Expiry Interceptor ---
+function handleAuthExpiry() {
+  if (pollTimer) clearInterval(pollTimer);
+  if (chatListTimer) clearInterval(chatListTimer);
+  pollTimer = null;
+  chatListTimer = null;
+  activeChat = null;
+  currentUser = null;
+
+  localStorage.removeItem('token');
+  localStorage.removeItem('role');
+  localStorage.removeItem('empId');
+
+  showScreen(viewLogin);
+  alert('Your session has expired. Please log in again.');
+}
+
 // --- Preload Employee Directory for Name Searching ---
 async function loadEmployeeDirectory() {
   if (!currentUser) return;
@@ -36,6 +53,10 @@ async function loadEmployeeDirectory() {
     const res = await fetch(`${BACKEND_URL}/api/employees`, {
       headers: { 'Authorization': `Bearer ${currentUser.token}`, 'X-Tunnel-Skip-Anti-Phishing-Page': 'true' }
     });
+    if (res.status === 401 || res.status === 403) {
+      handleAuthExpiry();
+      return;
+    }
     if (!res.ok) return;
     const users = await res.json();
     if (Array.isArray(users)) {
@@ -49,6 +70,9 @@ async function loadEmployeeDirectory() {
     }
   } catch (e) {
     console.error('Could not load employee directory for search:', e);
+    if (e.message && e.message.includes('Failed to fetch') && currentUser) {
+      handleAuthExpiry();
+    }
   }
 }
 
@@ -337,6 +361,11 @@ async function loadMyChats() {
     const res = await fetch(`${BACKEND_URL}/api/chats/my?employeeId=${encodeURIComponent(currentUser.empId)}`, {
       headers: { 'Authorization': `Bearer ${currentUser.token}`, 'X-Tunnel-Skip-Anti-Phishing-Page': 'true' }
     });
+
+    if (res.status === 401 || res.status === 403) {
+      handleAuthExpiry();
+      return;
+    }
     if (!res.ok) return;
 
     const allChats = await res.json();
@@ -355,6 +384,10 @@ async function loadMyChats() {
         const mRes = await fetch(`${BACKEND_URL}/api/messages/${chat.id}`, {
           headers: { 'Authorization': `Bearer ${currentUser.token}`, 'X-Tunnel-Skip-Anti-Phishing-Page': 'true' }
         });
+        if (mRes.status === 401 || mRes.status === 403) {
+          handleAuthExpiry();
+          return null;
+        }
         if (mRes.ok) {
           let msgs = await mRes.json();
           if (Array.isArray(msgs) && msgs.length > 0) {
@@ -391,17 +424,23 @@ async function loadMyChats() {
             };
           }
         }
-      } catch (e) {}
+      } catch (e) {
+        if (e.message && e.message.includes('Failed to fetch') && currentUser) {
+          handleAuthExpiry();
+        }
+      }
       return { ...chat, totalMsgs: 0, unreadCount: 0, lastMsgId: 0, lastMsgText: '', lastMsgFormattedTime: '' };
     }));
 
-    // Auto-sort by latest message ID
-    chatsWithMeta.sort((a, b) => (b.lastMsgId || 0) - (a.lastMsgId || 0));
+    if (!currentUser) return; // Guard if session expired during map
+
+    const validChats = chatsWithMeta.filter(Boolean);
+    validChats.sort((a, b) => (b.lastMsgId || 0) - (a.lastMsgId || 0));
 
     // Deduplicate and attach Full Name from Directory
     const seenPeers = new Set();
     const uniqueChats = [];
-    for (const chat of chatsWithMeta) {
+    for (const chat of validChats) {
       const peer = getPeerDisplayName(chat);
       if (!seenPeers.has(peer.toUpperCase())) {
         seenPeers.add(peer.toUpperCase());
@@ -417,6 +456,9 @@ async function loadMyChats() {
     filterAndRenderChats(activeQuery);
   } catch (err) {
     console.error('Error loading chats:', err);
+    if (err.message && err.message.includes('Failed to fetch') && currentUser) {
+      handleAuthExpiry();
+    }
   }
 }
 
@@ -440,6 +482,10 @@ if (btnFabStartChat) {
       const res = await fetch(`${BACKEND_URL}/api/employees`, {
         headers: { 'Authorization': `Bearer ${currentUser.token}`, 'X-Tunnel-Skip-Anti-Phishing-Page': 'true' }
       });
+      if (res.status === 401 || res.status === 403) {
+        handleAuthExpiry();
+        return;
+      }
       const users = await res.json();
       if (!userSelectionList) return;
       userSelectionList.innerHTML = '';
@@ -462,6 +508,9 @@ if (btnFabStartChat) {
       });
     } catch (err) {
       if (userSelectionList) userSelectionList.innerHTML = `<p style="padding:12px; color:red;">Failed to load: ${err.message}</p>`;
+      if (err.message && err.message.includes('Failed to fetch') && currentUser) {
+        handleAuthExpiry();
+      }
     }
   });
 }
@@ -475,6 +524,10 @@ async function onSelectMemberToChat(targetEmpId) {
       headers: { 'Authorization': `Bearer ${currentUser.token}`, 'X-Tunnel-Skip-Anti-Phishing-Page': 'true' }
     });
 
+    if (res.status === 401 || res.status === 403) {
+      handleAuthExpiry();
+      return;
+    }
     if (!res.ok) throw new Error(`Server returned ${res.status}`);
     const chat = await res.json();
 
@@ -483,6 +536,9 @@ async function onSelectMemberToChat(targetEmpId) {
     openChatScreen(chat.id, targetEmpId);
   } catch (err) {
     alert(`Could not start chat: ${err.message}`);
+    if (err.message && err.message.includes('Failed to fetch') && currentUser) {
+      handleAuthExpiry();
+    }
   }
 }
 
@@ -541,6 +597,10 @@ async function openGroupMemberSelection(groupName) {
     const res = await fetch(`${BACKEND_URL}/api/employees`, {
       headers: { 'Authorization': `Bearer ${currentUser.token}`, 'X-Tunnel-Skip-Anti-Phishing-Page': 'true' }
     });
+    if (res.status === 401 || res.status === 403) {
+      handleAuthExpiry();
+      return;
+    }
     const users = await res.json();
     membersBox.innerHTML = '';
 
@@ -600,6 +660,10 @@ async function openGroupMemberSelection(groupName) {
           })
         });
 
+        if (createRes.status === 401 || createRes.status === 403) {
+          handleAuthExpiry();
+          return;
+        }
         if (!createRes.ok) throw new Error(`Server returned ${createRes.status}`);
         const newGroup = await createRes.json();
 
@@ -608,11 +672,17 @@ async function openGroupMemberSelection(groupName) {
         openChatScreen(newGroup.id, groupName);
       } catch (err) {
         alert(`Failed to create group: ${err.message}`);
+        if (err.message && err.message.includes('Failed to fetch') && currentUser) {
+          handleAuthExpiry();
+        }
       }
     };
 
   } catch (err) {
     membersBox.innerHTML = `<p style="color:red; font-size:13px; text-align:center;">Failed to load employees: ${err.message}</p>`;
+    if (err.message && err.message.includes('Failed to fetch') && currentUser) {
+      handleAuthExpiry();
+    }
   }
 }
 
@@ -630,11 +700,16 @@ function openChatScreen(chatId, title) {
 }
 
 async function fetchMessages() {
-  if (!activeChat || !messagesStream) return;
+  if (!activeChat || !messagesStream || !currentUser) return;
   try {
     const res = await fetch(`${BACKEND_URL}/api/messages/${activeChat.id}`, {
       headers: { 'Authorization': `Bearer ${currentUser.token}`, 'X-Tunnel-Skip-Anti-Phishing-Page': 'true' }
     });
+
+    if (res.status === 401 || res.status === 403) {
+      handleAuthExpiry();
+      return;
+    }
     if (!res.ok) return;
 
     let msgs = await res.json();
@@ -668,6 +743,9 @@ async function fetchMessages() {
     messagesStream.scrollTop = messagesStream.scrollHeight;
   } catch (err) {
     console.error('Polling error:', err);
+    if (err.message && err.message.includes('Failed to fetch') && currentUser) {
+      handleAuthExpiry();
+    }
   }
 }
 
@@ -677,17 +755,28 @@ if (btnSendMessage) {
     if (!text || !activeChat) return;
     chatTextInput.value = '';
 
-    await fetch(`${BACKEND_URL}/api/messages`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentUser.token}`, 'X-Tunnel-Skip-Anti-Phishing-Page': 'true' },
-      body: JSON.stringify({
-        chatId: activeChat.id,
-        senderId: currentUser.empId,
-        content: text
-      })
-    });
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentUser.token}`, 'X-Tunnel-Skip-Anti-Phishing-Page': 'true' },
+        body: JSON.stringify({
+          chatId: activeChat.id,
+          senderId: currentUser.empId,
+          content: text
+        })
+      });
 
-    await fetchMessages();
+      if (res.status === 401 || res.status === 403) {
+        handleAuthExpiry();
+        return;
+      }
+
+      await fetchMessages();
+    } catch (err) {
+      if (err.message && err.message.includes('Failed to fetch') && currentUser) {
+        handleAuthExpiry();
+      }
+    }
   });
 }
 
