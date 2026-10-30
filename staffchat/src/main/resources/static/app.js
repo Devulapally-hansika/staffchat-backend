@@ -63,7 +63,7 @@ function restoreChatLocally(chatId) {
   localStorage.setItem(`hiddenChats_${currentUser.empId}`, JSON.stringify(hidden));
 }
 
-// --- Read / Unread Tracking (Persistent by Highest Message ID & Read Count) ---
+// --- Read / Unread Tracking (Persistent by Highest Message ID) ---
 function getLastReadMsgId(chatId) {
   if (!currentUser) return null;
   const val = localStorage.getItem(`lastReadMsgId_${currentUser.empId}_${chatId}`);
@@ -213,8 +213,8 @@ function renderCachedChats() {
   } catch (e) {}
 }
 
-// --- Startup & Auth ---
-window.addEventListener('DOMContentLoaded', () => {
+// --- Session Initializer & Resumption Handler ---
+function resumeUserSession() {
   const token = localStorage.getItem('token');
   const role = localStorage.getItem('role');
   const empId = localStorage.getItem('empId');
@@ -224,16 +224,31 @@ window.addEventListener('DOMContentLoaded', () => {
 
     // Group button visible for all authenticated staff
     if (fabGroup) fabGroup.classList.remove('hidden');
-    if (fabAddEmp && currentUser.role === 'ADMIN') fabAddEmp.classList.remove('hidden');
+    // Add staff button strictly restricted to Admin
+    if (fabAddEmp && currentUser.role === 'ADMIN') {
+      fabAddEmp.classList.remove('hidden');
+    } else if (fabAddEmp) {
+      fabAddEmp.classList.add('hidden');
+    }
 
     showScreen(viewMain);
-    renderCachedChats();
-    loadMyChats();
+    renderCachedChats(); // Instant load from memory
+    loadMyChats();        // Background network sync
     startChatListBackgroundPolling();
   } else {
     showScreen(viewLogin);
   }
+}
+
+// Attach lifecycle listeners so chats stay visible when returning without logout
+window.addEventListener('DOMContentLoaded', resumeUserSession);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    resumeUserSession();
+  }
 });
+window.addEventListener('focus', resumeUserSession);
+window.addEventListener('pageshow', resumeUserSession);
 
 const formLogin = document.getElementById('form-login');
 if (formLogin) {
@@ -301,21 +316,25 @@ async function loadMyChats() {
             const lastMsg = msgs[msgs.length - 1];
             const lastMsgId = Number(lastMsg.id || 0);
 
-            let lastReadId = getLastReadMsgId(chat.id);
+            const storedReadId = getLastReadMsgId(chat.id);
 
-            // On first discovery, assume past history is already seen (no phantom badge)
-            if (lastReadId === null) {
-              markChatAsRead(chat.id, lastMsgId);
-              lastReadId = lastMsgId;
-            }
-
-            // Only count incoming messages newer than last seen message ID
             let unread = 0;
-            if (lastReadId !== null) {
+            if (storedReadId !== null) {
+              // Count only genuine new messages sent after our last read ID
               unread = msgs.filter(m =>
-                  Number(m.id || 0) > lastReadId &&
+                  Number(m.id || 0) > storedReadId &&
                   String(m.senderId).toUpperCase() !== currentUser.empId.toUpperCase()
               ).length;
+            } else {
+              // First time discovering chat: check if the latest message was an incoming unseen message
+              const isFromOther = String(lastMsg.senderId).toUpperCase() !== currentUser.empId.toUpperCase();
+              if (isFromOther) {
+                unread = 1;
+                const prevId = msgs.length > 1 ? Number(msgs[msgs.length - 2].id || 0) : 0;
+                markChatAsRead(chat.id, prevId);
+              } else {
+                markChatAsRead(chat.id, lastMsgId);
+              }
             }
 
             return {
@@ -332,10 +351,8 @@ async function loadMyChats() {
       return { ...chat, totalMsgs: 0, unreadCount: 0, lastMsgId: 0, lastMsgText: '', lastMsgFormattedTime: '' };
     }));
 
-    // Auto-sort by latest message ID
     chatsWithMeta.sort((a, b) => (b.lastMsgId || 0) - (a.lastMsgId || 0));
 
-    // Deduplicate by peer name
     const seenPeers = new Set();
     const uniqueChats = [];
     for (const chat of chatsWithMeta) {
@@ -419,7 +436,7 @@ async function onSelectMemberToChat(targetEmpId) {
   }
 }
 
-// --- Multi-Step Group Creation Flow (Name -> Checkbox Selection with Self Default) ---
+// --- Multi-Step Group Creation Flow (Name -> Dynamic Checkbox Selection) ---
 if (fabGroup) {
   fabGroup.addEventListener('click', () => {
     if (!modalGroup) return;
@@ -500,7 +517,7 @@ async function openGroupMemberSelection(groupName) {
 
         if (isSelf) {
           chk.checked = true;
-          chk.disabled = true; // Creator is pre-checked by default
+          chk.disabled = true; // Creator is pre-selected by default
         } else {
           chk.onchange = (e) => {
             if (e.target.checked) selectedMembers.add(id);
