@@ -23,6 +23,7 @@ const modalSettings = document.getElementById('modal-settings');
 const modalAddEmp = document.getElementById('modal-add-emp');
 const modalGroup = document.getElementById('modal-group');
 const fabAddEmp = document.getElementById('fab-add-emp');
+const fabGroup = document.getElementById('fab-group');
 
 // --- Eye Toggle on Login ---
 const togglePasswordBtn = document.getElementById('toggle-password');
@@ -146,6 +147,75 @@ function getPeerDisplayName(chat) {
   return parts[0] || myId;
 }
 
+// --- Instant UI Render from Local Cache ---
+function renderChatListDOM(uniqueChats) {
+  if (!chatListContainer) return;
+  chatListContainer.innerHTML = '';
+
+  if (!uniqueChats || uniqueChats.length === 0) {
+    chatListContainer.innerHTML = '<p style="text-align:center; color:#888; padding:20px;">No chats yet. Tap + to start one.</p>';
+    return;
+  }
+
+  uniqueChats.forEach(chat => {
+    const peer = chat.peerName;
+    const div = document.createElement('div');
+    div.className = 'conversation-item';
+    div.style.cssText = 'display:flex; justify-content:space-between; align-items:center; padding:12px 16px; border-bottom:1px solid #eee; cursor:pointer; user-select:none;';
+
+    const badgeHtml = chat.unreadCount > 0
+        ? `<span style="background:#25d366; color:#fff; border-radius:12px; padding:2px 8px; font-size:11px; font-weight:700; min-width:18px; text-align:center;">${chat.unreadCount}</span>`
+        : '';
+
+    div.innerHTML = `
+      <div class="item-left" style="display:flex; align-items:center; gap:12px; pointer-events:none;">
+        <div class="user-avatar-circle" style="font-size:24px;">👤</div>
+        <div>
+          <div class="contact-name" style="font-weight:600; font-size:15px; color:#111;">${peer}</div>
+          <div style="font-size:12px; color:#777; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+            ${chat.lastMsgText || 'Tap to view'}
+          </div>
+        </div>
+      </div>
+      <div class="item-right" style="display:flex; flex-direction:column; align-items:flex-end; gap:4px; pointer-events:none;">
+        <span style="font-size:11px; color:#888;">${chat.lastMsgFormattedTime || ''}</span>
+        ${badgeHtml}
+      </div>
+    `;
+
+    let timer = null;
+    div.addEventListener('pointerdown', () => {
+      timer = setTimeout(() => {
+        if (confirm(`Delete chat with ${peer}?`)) {
+          hideChatLocally(chat.id);
+          div.remove();
+        }
+      }, 600);
+    });
+    div.addEventListener('pointerup', () => {
+      clearTimeout(timer);
+      markChatAsRead(chat.id, chat.totalMsgs);
+      openChatScreen(chat.id, peer);
+    });
+    div.addEventListener('pointercancel', () => clearTimeout(timer));
+
+    chatListContainer.appendChild(div);
+  });
+}
+
+function renderCachedChats() {
+  if (!currentUser) return;
+  try {
+    const cached = localStorage.getItem(`cached_chats_${currentUser.empId}`);
+    if (cached) {
+      const parsed = JSON.parse(cached);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        renderChatListDOM(parsed);
+      }
+    }
+  } catch (e) {}
+}
+
 // --- Startup & Auth ---
 window.addEventListener('DOMContentLoaded', () => {
   const token = localStorage.getItem('token');
@@ -154,8 +224,13 @@ window.addEventListener('DOMContentLoaded', () => {
 
   if (token && empId) {
     currentUser = { token, role: (role || '').toUpperCase(), empId: empId.toUpperCase() };
+
+    // Group button is visible to all authenticated staff (Admin and non-Admin)
+    if (fabGroup) fabGroup.classList.remove('hidden');
     if (fabAddEmp && currentUser.role === 'ADMIN') fabAddEmp.classList.remove('hidden');
+
     showScreen(viewMain);
+    renderCachedChats(); // Instant 0ms display from local memory
     loadMyChats();
     startChatListBackgroundPolling();
   } else {
@@ -185,8 +260,12 @@ if (formLogin) {
       localStorage.setItem('empId', employeeId);
       currentUser = { token: data.token, role: (data.role || '').toUpperCase(), empId: employeeId };
 
+      // Ensure Group button is visible to non-admin as well as admin
+      if (fabGroup) fabGroup.classList.remove('hidden');
       if (fabAddEmp && currentUser.role === 'ADMIN') fabAddEmp.classList.remove('hidden');
+
       showScreen(viewMain);
+      renderCachedChats(); // Instant 0ms display on login
       loadMyChats();
       startChatListBackgroundPolling();
     } catch (err) {
@@ -210,6 +289,7 @@ async function loadMyChats() {
 
     if (visible.length === 0) {
       chatListContainer.innerHTML = '<p style="text-align:center; color:#888; padding:20px;">No chats yet. Tap + to start one.</p>';
+      localStorage.setItem(`cached_chats_${currentUser.empId}`, JSON.stringify([]));
       return;
     }
 
@@ -258,51 +338,10 @@ async function loadMyChats() {
       }
     }
 
-    chatListContainer.innerHTML = '';
-    uniqueChats.forEach(chat => {
-      const peer = chat.peerName;
-      const div = document.createElement('div');
-      div.className = 'conversation-item';
-      div.style.cssText = 'display:flex; justify-content:space-between; align-items:center; padding:12px 16px; border-bottom:1px solid #eee; cursor:pointer; user-select:none;';
+    // Save to local cache for instant 0ms load on next login/refresh
+    localStorage.setItem(`cached_chats_${currentUser.empId}`, JSON.stringify(uniqueChats));
 
-      const badgeHtml = chat.unreadCount > 0 
-        ? `<span style="background:#25d366; color:#fff; border-radius:12px; padding:2px 8px; font-size:11px; font-weight:700; min-width:18px; text-align:center;">${chat.unreadCount}</span>`
-        : '';
-
-      div.innerHTML = `
-        <div class="item-left" style="display:flex; align-items:center; gap:12px; pointer-events:none;">
-          <div class="user-avatar-circle" style="font-size:24px;">👤</div>
-          <div>
-            <div class="contact-name" style="font-weight:600; font-size:15px; color:#111;">${peer}</div>
-            <div style="font-size:12px; color:#777; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
-              ${chat.lastMsgText || 'Tap to view'}
-            </div>
-          </div>
-        </div>
-        <div class="item-right" style="display:flex; flex-direction:column; align-items:flex-end; gap:4px; pointer-events:none;">
-          <span style="font-size:11px; color:#888;">${chat.lastMsgFormattedTime}</span>
-          ${badgeHtml}
-        </div>
-      `;
-
-      let timer = null;
-      div.addEventListener('pointerdown', () => {
-        timer = setTimeout(() => {
-          if (confirm(`Delete chat with ${peer}?`)) {
-            hideChatLocally(chat.id);
-            div.remove();
-          }
-        }, 600);
-      });
-      div.addEventListener('pointerup', () => {
-        clearTimeout(timer);
-        markChatAsRead(chat.id, chat.totalMsgs);
-        openChatScreen(chat.id, peer);
-      });
-      div.addEventListener('pointercancel', () => clearTimeout(timer));
-
-      chatListContainer.appendChild(div);
-    });
+    renderChatListDOM(uniqueChats);
   } catch (err) {
     console.error('Error loading chats:', err);
   }
@@ -436,13 +475,13 @@ if (btnSendMessage) {
     await fetch(`${BACKEND_URL}/api/messages`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentUser.token}`, 'X-Tunnel-Skip-Anti-Phishing-Page': 'true' },
-      body: JSON.stringify({ 
-        chatId: activeChat.id, 
-        senderId: currentUser.empId, 
-        content: text 
+      body: JSON.stringify({
+        chatId: activeChat.id,
+        senderId: currentUser.empId,
+        content: text
       })
     });
-    
+
     await fetchMessages();
   });
 }
@@ -500,7 +539,6 @@ if (fabAddEmp) {
   });
 }
 
-const fabGroup = document.getElementById('fab-group');
 if (fabGroup) {
   fabGroup.addEventListener('click', () => {
     if (modalGroup) modalGroup.classList.remove('hidden');
