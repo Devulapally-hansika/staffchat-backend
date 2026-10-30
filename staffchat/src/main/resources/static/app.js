@@ -63,15 +63,18 @@ function restoreChatLocally(chatId) {
   localStorage.setItem(`hiddenChats_${currentUser.empId}`, JSON.stringify(hidden));
 }
 
-// --- Read / Unread Badge Helpers ---
-function getLastReadCount(chatId) {
-  if (!currentUser) return 0;
-  return parseInt(localStorage.getItem(`lastRead_${currentUser.empId}_${chatId}`) || '0', 10);
+// --- Read / Unread Tracking (Persistent by Highest Message ID & Read Count) ---
+function getLastReadMsgId(chatId) {
+  if (!currentUser) return null;
+  const val = localStorage.getItem(`lastReadMsgId_${currentUser.empId}_${chatId}`);
+  return val !== null ? parseInt(val, 10) : null;
 }
 
-function markChatAsRead(chatId, totalCount) {
+function markChatAsRead(chatId, highestMsgId) {
   if (!currentUser) return;
-  localStorage.setItem(`lastRead_${currentUser.empId}_${chatId}`, String(totalCount));
+  if (highestMsgId !== undefined && highestMsgId !== null) {
+    localStorage.setItem(`lastReadMsgId_${currentUser.empId}_${chatId}`, String(highestMsgId));
+  }
 }
 
 // --- Accurate Indian Standard Time (IST) Formatter ---
@@ -133,17 +136,11 @@ function getPeerDisplayName(chat) {
   if (!currentUser) return name;
 
   const myId = String(currentUser.empId).trim().toUpperCase();
-
-  // Split on symbols and spaces
   const parts = name.split(/[\s↔<>\-]+/).filter(Boolean);
-
-  // Filter out current user's ID
   const others = parts.filter(p => p.toUpperCase() !== myId);
   if (others.length > 0) {
     return others[0];
   }
-
-  // If chat is a self-chat (Admin01 ↔ ADMIN01), show name once
   return parts[0] || myId;
 }
 
@@ -194,7 +191,7 @@ function renderChatListDOM(uniqueChats) {
     });
     div.addEventListener('pointerup', () => {
       clearTimeout(timer);
-      markChatAsRead(chat.id, chat.totalMsgs);
+      markChatAsRead(chat.id, chat.lastMsgId);
       openChatScreen(chat.id, peer);
     });
     div.addEventListener('pointercancel', () => clearTimeout(timer));
@@ -225,12 +222,12 @@ window.addEventListener('DOMContentLoaded', () => {
   if (token && empId) {
     currentUser = { token, role: (role || '').toUpperCase(), empId: empId.toUpperCase() };
 
-    // Group button is visible to all authenticated staff (Admin and non-Admin)
+    // Group button visible for all authenticated staff
     if (fabGroup) fabGroup.classList.remove('hidden');
     if (fabAddEmp && currentUser.role === 'ADMIN') fabAddEmp.classList.remove('hidden');
 
     showScreen(viewMain);
-    renderCachedChats(); // Instant 0ms display from local memory
+    renderCachedChats();
     loadMyChats();
     startChatListBackgroundPolling();
   } else {
@@ -260,12 +257,11 @@ if (formLogin) {
       localStorage.setItem('empId', employeeId);
       currentUser = { token: data.token, role: (data.role || '').toUpperCase(), empId: employeeId };
 
-      // Ensure Group button is visible to non-admin as well as admin
       if (fabGroup) fabGroup.classList.remove('hidden');
       if (fabAddEmp && currentUser.role === 'ADMIN') fabAddEmp.classList.remove('hidden');
 
       showScreen(viewMain);
-      renderCachedChats(); // Instant 0ms display on login
+      renderCachedChats();
       loadMyChats();
       startChatListBackgroundPolling();
     } catch (err) {
@@ -274,7 +270,7 @@ if (formLogin) {
   });
 }
 
-// --- Main Chat List with Deduplication & Auto-Sorting ---
+// --- Main Chat List with Accurate Unread Resolution ---
 async function loadMyChats() {
   if (!currentUser || !chatListContainer) return;
   try {
@@ -303,18 +299,30 @@ async function loadMyChats() {
           if (Array.isArray(msgs) && msgs.length > 0) {
             msgs.sort((a, b) => Number(a.id || 0) - Number(b.id || 0));
             const lastMsg = msgs[msgs.length - 1];
-            const readCount = getLastReadCount(chat.id);
+            const lastMsgId = Number(lastMsg.id || 0);
 
+            let lastReadId = getLastReadMsgId(chat.id);
+
+            // On first discovery, assume past history is already seen (no phantom badge)
+            if (lastReadId === null) {
+              markChatAsRead(chat.id, lastMsgId);
+              lastReadId = lastMsgId;
+            }
+
+            // Only count incoming messages newer than last seen message ID
             let unread = 0;
-            if (msgs.length > readCount) {
-              unread = msgs.slice(readCount).filter(m => String(m.senderId).toUpperCase() !== currentUser.empId.toUpperCase()).length;
+            if (lastReadId !== null) {
+              unread = msgs.filter(m =>
+                  Number(m.id || 0) > lastReadId &&
+                  String(m.senderId).toUpperCase() !== currentUser.empId.toUpperCase()
+              ).length;
             }
 
             return {
               ...chat,
               totalMsgs: msgs.length,
               unreadCount: unread,
-              lastMsgId: Number(lastMsg.id || 0),
+              lastMsgId: lastMsgId,
               lastMsgText: lastMsg.content || lastMsg.message || '',
               lastMsgFormattedTime: formatDisplayTime(lastMsg.sentAt)
             };
@@ -324,10 +332,10 @@ async function loadMyChats() {
       return { ...chat, totalMsgs: 0, unreadCount: 0, lastMsgId: 0, lastMsgText: '', lastMsgFormattedTime: '' };
     }));
 
-    // Auto-sort by latest message ID so active conversations move to top
+    // Auto-sort by latest message ID
     chatsWithMeta.sort((a, b) => (b.lastMsgId || 0) - (a.lastMsgId || 0));
 
-    // Deduplicate by peer name so duplicate entries never show twice
+    // Deduplicate by peer name
     const seenPeers = new Set();
     const uniqueChats = [];
     for (const chat of chatsWithMeta) {
@@ -338,9 +346,7 @@ async function loadMyChats() {
       }
     }
 
-    // Save to local cache for instant 0ms load on next login/refresh
     localStorage.setItem(`cached_chats_${currentUser.empId}`, JSON.stringify(uniqueChats));
-
     renderChatListDOM(uniqueChats);
   } catch (err) {
     console.error('Error loading chats:', err);
@@ -413,6 +419,138 @@ async function onSelectMemberToChat(targetEmpId) {
   }
 }
 
+// --- Multi-Step Group Creation Flow (Name -> Checkbox Selection with Self Default) ---
+if (fabGroup) {
+  fabGroup.addEventListener('click', () => {
+    if (!modalGroup) return;
+    modalGroup.classList.remove('hidden');
+
+    // Step 1: Input Group Name
+    modalGroup.innerHTML = `
+      <div style="background:#fff; border-radius:12px; padding:20px; width:90%; max-width:400px; margin:40px auto; box-shadow:0 4px 16px rgba(0,0,0,0.2);">
+        <h3 style="margin-top:0; font-size:17px; font-weight:700;">Create New Group</h3>
+        <input type="text" id="grp-name-input" placeholder="Enter group name..." style="width:100%; padding:10px; border:1px solid #ccc; border-radius:6px; box-sizing:border-box; margin-bottom:16px; font-size:14px;" />
+        <div style="display:flex; justify-content:flex-end; gap:10px;">
+          <button id="grp-btn-cancel" style="padding:8px 16px; border:none; background:#eee; border-radius:6px; cursor:pointer;">Cancel</button>
+          <button id="grp-btn-next" style="padding:8px 16px; border:none; background:#008069; color:#fff; border-radius:6px; font-weight:600; cursor:pointer;">Next</button>
+        </div>
+      </div>
+    `;
+
+    document.getElementById('grp-btn-cancel').onclick = () => modalGroup.classList.add('hidden');
+    document.getElementById('grp-btn-next').onclick = () => {
+      const gName = document.getElementById('grp-name-input').value.trim();
+      if (!gName) {
+        alert('Please enter a group name');
+        return;
+      }
+      openGroupMemberSelection(gName);
+    };
+  });
+}
+
+async function openGroupMemberSelection(groupName) {
+  if (!modalGroup) return;
+
+  // Step 2: Native Android style member selection dialog
+  modalGroup.innerHTML = `
+    <div style="background:#fff; border-radius:14px; padding:24px 20px 16px 20px; width:88%; max-width:380px; margin:60px auto; box-shadow:0 8px 30px rgba(0,0,0,0.3); display:flex; flex-direction:column; font-family:sans-serif;">
+      <h3 style="margin:0 0 18px 0; font-size:17px; font-weight:700; color:#111;">Add members to ${groupName}</h3>
+      
+      <div id="grp-members-container" style="overflow-y:auto; max-height:280px; margin-bottom:20px; display:flex; flex-direction:column; gap:4px;">
+        <p style="color:#888; font-size:14px; text-align:center; padding:10px 0;">Loading members...</p>
+      </div>
+
+      <div style="display:flex; justify-content:flex-end; align-items:center; gap:20px; padding-top:8px;">
+        <button id="grp-member-cancel" style="border:none; background:transparent; color:#008069; font-weight:700; font-size:13px; letter-spacing:0.5px; cursor:pointer; padding:6px 8px;">CANCEL</button>
+        <button id="grp-member-create" style="border:none; background:transparent; color:#008069; font-weight:700; font-size:13px; letter-spacing:0.5px; cursor:pointer; padding:6px 8px;">CREATE</button>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('grp-member-cancel').onclick = () => modalGroup.classList.add('hidden');
+
+  const membersBox = document.getElementById('grp-members-container');
+
+  try {
+    const res = await fetch(`${BACKEND_URL}/api/employees`, {
+      headers: { 'Authorization': `Bearer ${currentUser.token}`, 'X-Tunnel-Skip-Anti-Phishing-Page': 'true' }
+    });
+    const users = await res.json();
+    membersBox.innerHTML = '';
+
+    const selectedMembers = new Set([currentUser.empId.toUpperCase()]);
+
+    if (Array.isArray(users)) {
+      users.forEach(u => {
+        const id = String(u.employeeId || u.id || '').trim().toUpperCase();
+        if (!id) return;
+
+        const isSelf = id === currentUser.empId.toUpperCase();
+        const displayName = u.fullName || u.name || u.username || (isSelf ? 'Hospital Admin' : '');
+        const labelText = displayName ? `${id} — ${displayName}` : id;
+
+        const row = document.createElement('label');
+        row.style.cssText = 'display:flex; align-items:center; gap:16px; padding:10px 4px; cursor:pointer; user-select:none;';
+
+        const chk = document.createElement('input');
+        chk.type = 'checkbox';
+        chk.value = id;
+        chk.style.cssText = 'width:18px; height:18px; accent-color:#008069; cursor:pointer;';
+
+        if (isSelf) {
+          chk.checked = true;
+          chk.disabled = true; // Creator is pre-checked by default
+        } else {
+          chk.onchange = (e) => {
+            if (e.target.checked) selectedMembers.add(id);
+            else selectedMembers.delete(id);
+          };
+        }
+
+        const span = document.createElement('span');
+        span.style.cssText = 'font-size:14px; color:#222; font-weight:500;';
+        span.textContent = labelText;
+
+        row.appendChild(chk);
+        row.appendChild(span);
+        membersBox.appendChild(row);
+      });
+    }
+
+    document.getElementById('grp-member-create').onclick = async () => {
+      const memberList = Array.from(selectedMembers);
+      try {
+        const createRes = await fetch(`${BACKEND_URL}/api/chats/group`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${currentUser.token}`,
+            'X-Tunnel-Skip-Anti-Phishing-Page': 'true'
+          },
+          body: JSON.stringify({
+            groupName: groupName,
+            creatorId: currentUser.empId,
+            memberIds: memberList
+          })
+        });
+
+        if (!createRes.ok) throw new Error(`Server returned ${createRes.status}`);
+        const newGroup = await createRes.json();
+
+        modalGroup.classList.add('hidden');
+        loadMyChats();
+        openChatScreen(newGroup.id, groupName);
+      } catch (err) {
+        alert(`Failed to create group: ${err.message}`);
+      }
+    };
+
+  } catch (err) {
+    membersBox.innerHTML = `<p style="color:red; font-size:13px; text-align:center;">Failed to load employees: ${err.message}</p>`;
+  }
+}
+
 // --- Active Chat Room & Message Display ---
 function openChatScreen(chatId, title) {
   activeChat = { id: chatId, name: title };
@@ -437,10 +575,12 @@ async function fetchMessages() {
     let msgs = await res.json();
     if (!Array.isArray(msgs)) return;
 
-    // Strict sequential ID sorting: guaranteed chronological order
     msgs.sort((a, b) => Number(a.id || 0) - Number(b.id || 0));
 
-    markChatAsRead(activeChat.id, msgs.length);
+    if (msgs.length > 0) {
+      const highestId = Number(msgs[msgs.length - 1].id || 0);
+      markChatAsRead(activeChat.id, highestId);
+    }
 
     messagesStream.innerHTML = '';
     msgs.forEach(m => {
@@ -539,23 +679,10 @@ if (fabAddEmp) {
   });
 }
 
-if (fabGroup) {
-  fabGroup.addEventListener('click', () => {
-    if (modalGroup) modalGroup.classList.remove('hidden');
-  });
-}
-
 const btnCancelAddEmp = document.getElementById('btn-cancel-add-emp');
 if (btnCancelAddEmp) {
   btnCancelAddEmp.addEventListener('click', () => {
     if (modalAddEmp) modalAddEmp.classList.add('hidden');
-  });
-}
-
-const btnCancelGroup = document.getElementById('btn-cancel-group');
-if (btnCancelGroup) {
-  btnCancelGroup.addEventListener('click', () => {
-    if (modalGroup) modalGroup.classList.add('hidden');
   });
 }
 
